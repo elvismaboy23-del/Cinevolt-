@@ -1,0 +1,6 @@
+{
+  "name": "cinevault",
+  "description": "A premium platform for filmmakers to subscribe, upload, and sell movies directly to buyers via Paystack Mobile Money.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
