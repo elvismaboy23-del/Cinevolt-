@@ -147,7 +147,7 @@ export default function UploadMovieForm({
         </div>
         <div>
           <h2 className="text-lg font-bold text-zinc-100 tracking-tight uppercase font-display">Publish Film Cut (.MP4)</h2>
-          <p className="text-xs text-zinc-400">Direct file uploads conformant with safe offline sandbox players.</p>
+          <p className="text-xs text-zinc-400">Direct file uploads conformant with standard secure streaming player frameworks.</p>
         </div>
       </div>
 
@@ -299,7 +299,7 @@ export default function UploadMovieForm({
                   </p>
 
                   <div className="mt-2.5 flex items-center justify-center flex-wrap gap-1 relative z-10 pointer-events-auto">
-                    <span className="text-[8px] text-zinc-550 font-black self-center mr-1">DEMO ARTS:</span>
+                    <span className="text-[8px] text-zinc-550 font-black self-center mr-1">PRESET COVERS:</span>
                     {POSTER_PRESETS.map((p) => (
                       <button
                         key={p.name}
@@ -307,7 +307,7 @@ export default function UploadMovieForm({
                         onClick={(e) => {
                           e.stopPropagation();
                           setCoverUrl(p.url);
-                          setCoverFileName(`[Demo Preset] ${p.name}.jpg`);
+                          setCoverFileName(`${p.name}.jpg`);
                         }}
                         className="text-[8px] bg-sleek-card hover:bg-sleek-dark text-zinc-300 py-1 px-2 rounded border border-sleek-border hover:border-brand/40 cursor-pointer transition-all font-mono"
                       >
@@ -396,11 +396,11 @@ export default function UploadMovieForm({
                         e.stopPropagation();
                         // Mixkit sample cinematic mp4
                         setThrillerUrl('https://assets.mixkit.co/videos/preview/mixkit-cinematic-shot-of-a-mystery-man-with-a-hoodie-42004-large.mp4');
-                        setThrillerFileName('[Demo Master] Dramatic Silhouette.mp4');
+                        setThrillerFileName('Dramatic Silhouette.mp4');
                       }}
                       className="relative z-10 px-2 py-0.5 bg-sleek-card hover:bg-sleek-dark border border-sleek-border hover:border-[#00F0FF]/40 text-[8px] uppercase tracking-wider font-extrabold text-[#00F0FF] rounded-md transition-all cursor-pointer"
                     >
-                      ⚡ Use Sandbox Clip
+                      ⚡ Use Sample Clip
                     </button>
                   </div>
                 </div>
@@ -484,11 +484,11 @@ export default function UploadMovieForm({
                         e.stopPropagation();
                         // Mixkit sample rain reflection mp4
                         setFullMovieUrl('https://assets.mixkit.co/videos/preview/mixkit-car-headlights-reflected-on-rainy-asphalt-at-night-42261-large.mp4');
-                        setFullMovieFileName('[Demo Master] City Rain Reflection.mp4');
+                        setFullMovieFileName('City Rain Reflection.mp4');
                       }}
                       className="relative z-10 px-2 py-0.5 bg-sleek-card hover:bg-sleek-dark border border-sleek-border hover:border-[#00F0FF]/40 text-[8px] uppercase tracking-wider font-extrabold text-[#00F0FF] rounded-md transition-all cursor-pointer"
                     >
-                      ⚡ Use Sandbox Clip
+                      ⚡ Use Sample Clip
                     </button>
                   </div>
                 </div>

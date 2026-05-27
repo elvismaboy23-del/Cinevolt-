@@ -22,7 +22,11 @@ import {
   User as UserIcon,
   CreditCard,
   Grid,
-  Download
+  Download,
+  HelpCircle,
+  MapPin,
+  Phone,
+  Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User, Movie, CartItem, Purchase, UserRole } from './types';
@@ -32,6 +36,7 @@ import UploadMovieForm from './components/UploadMovieForm';
 import ProducerFinancials from './components/ProducerFinancials';
 import CineVaultLogo from './components/CineVaultLogo';
 import ProducerWallet from './components/ProducerWallet';
+import ToastNotification, { Toast } from './components/ToastNotification';
 
 export default function App() {
   // Data management
@@ -56,7 +61,7 @@ export default function App() {
   });
 
   // UI state
-  const [authMode, setAuthMode] = useState<'LOGIN' | 'REGISTER'>('LOGIN');
+  const [authMode, setAuthMode] = useState<'LOGIN' | 'REGISTER' | 'RECOVERY' | 'RESET'>('REGISTER');
   const [authRole, setAuthRole] = useState<UserRole>('BUYER');
   
   // Auth Form details
@@ -64,6 +69,13 @@ export default function App() {
   const [nameInput, setNameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState(''); // Simulated secure token
   const [authError, setAuthError] = useState('');
+
+  // Password Recovery and Reset states
+  const [recoveryEmail, setRecoveryEmail] = useState('');
+  const [recoveryCodeInput, setRecoveryCodeInput] = useState('');
+  const [generatedCode, setGeneratedCode] = useState('');
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [recoveryStep, setRecoveryStep] = useState<'REQUEST' | 'RESET_PASS'>('REQUEST');
 
   // Search & Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -79,25 +91,6 @@ export default function App() {
   // Paystack Billing orchestration & live integrations
   const [paystackKeyError, setPaystackKeyError] = useState<string | null>(null);
   const [pendingCheckoutData, setPendingCheckoutData] = useState<any | null>(null);
-  
-  const [gatewayMode, setGatewayMode] = useState<'LIVE' | 'SANDBOX'>(() => {
-    const saved = localStorage.getItem('cinevolt_gateway_mode');
-    return (saved as 'LIVE' | 'SANDBOX') || 'SANDBOX'; // Defaults to SANDBOX, giving them a working payment engine out of the box
-  });
-
-  // Local sandbox simulation UI states
-  const [isSimulatedCheckoutOpen, setIsSimulatedCheckoutOpen] = useState(false);
-  const [simulatedCheckoutData, setSimulatedCheckoutData] = useState<{
-    amount: number;
-    email: string;
-    itemName: string;
-    onSuccess: (reference: string) => void;
-    onCancel?: () => void;
-  } | null>(null);
-  const [simulatedCheckoutStep, setSimulatedCheckoutStep] = useState<'NETWORK' | 'PUSH_SENT' | 'PIN_ENTRY' | 'PROCESSING' | 'SUCCESS'>('NETWORK');
-  const [selectedNetwork, setSelectedNetwork] = useState<'MTN' | 'TELECEL' | 'AIRTELTIGO'>('MTN');
-  const [simulatedPhoneNumber, setSimulatedPhoneNumber] = useState('0244123456');
-  const [simulatedPin, setSimulatedPin] = useState('');
 
   // Buyer movie download states
   const [downloadingMovieId, setDownloadingMovieId] = useState<string | null>(null);
@@ -113,6 +106,38 @@ export default function App() {
     return localStorage.getItem('cinevolt_custom_public_key') || '';
   });
   const [isKeyModalOpen, setIsKeyModalOpen] = useState(false);
+  const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
+
+  // Toast notifications state and helpers
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const addToast = (params: {
+    title: string;
+    message: string;
+    type: 'success' | 'info' | 'error' | 'purchase';
+    movieTitle?: string;
+    coverUrl?: string;
+  }) => {
+    const id = `toast-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const newToast = { id, ...params };
+    setToasts(prev => [...prev, newToast]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 6000);
+  };
+
+  const removeToast = (id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  };
+
+  const handleWatchMovieFromToast = (movieTitle: string) => {
+    const movie = movies.find(m => m.title.toLowerCase() === movieTitle.toLowerCase());
+    if (movie) {
+      setSelectedMovie(movie);
+      setIsPlayingThriller(false);
+      setActiveTab('DISCOVER');
+    }
+  };
 
   // Pre-load Paystack Inline script on mount
   useEffect(() => {
@@ -139,11 +164,48 @@ export default function App() {
     if (activeUser) {
       if (activeUser.role === 'PRODUCER') {
         setActiveTab('CREATOR_STUDIO');
+        // Access Control: Set selectedMovie to their own uploaded movie or null
+        const producerMovies = movies.filter(m => m.producerId === activeUser.id);
+        if (producerMovies.length > 0) {
+          if (!selectedMovie || selectedMovie.producerId !== activeUser.id) {
+            setSelectedMovie(producerMovies[0]);
+          }
+        } else {
+          setSelectedMovie(null);
+        }
       } else {
-        setActiveTab('DISCOVER');
+        if (activeTab === 'CREATOR_STUDIO') {
+          setActiveTab('DISCOVER');
+        }
+        // If buyer has no selected movie, default to first available movie
+        if (!selectedMovie && movies.length > 0) {
+          setSelectedMovie(movies[0]);
+        }
+      }
+    } else {
+      // If no active user, default to first available movie
+      if (!selectedMovie && movies.length > 0) {
+        setSelectedMovie(movies[0]);
       }
     }
-  }, [activeUser]);
+  }, [activeUser, movies]);
+
+  // Tight synchronization to prevent buyers/non-producers from ever accessing the Creator Studio tab
+  useEffect(() => {
+    if ((!activeUser || activeUser.role !== 'PRODUCER') && activeTab === 'CREATOR_STUDIO') {
+      setActiveTab('DISCOVER');
+    }
+  }, [activeUser, activeTab]);
+
+  // Access Control: Continual enforcement that Producers can never access other producers' movies
+  useEffect(() => {
+    if (activeUser && activeUser.role === 'PRODUCER' && selectedMovie) {
+      if (selectedMovie.producerId !== activeUser.id) {
+        const producerMovies = movies.filter(m => m.producerId === activeUser.id);
+        setSelectedMovie(producerMovies.length > 0 ? producerMovies[0] : null);
+      }
+    }
+  }, [selectedMovie, activeUser, movies]);
 
   useEffect(() => {
     localStorage.setItem('cinevolt_purchases', JSON.stringify(purchases));
@@ -152,10 +214,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('cinevolt_cart', JSON.stringify(cart));
   }, [cart]);
-
-  useEffect(() => {
-    localStorage.setItem('cinevolt_gateway_mode', gatewayMode);
-  }, [gatewayMode]);
 
   // Auth processing
   const handleAuthSubmit = (e: React.FormEvent) => {
@@ -172,49 +230,66 @@ export default function App() {
       return;
     }
 
+    if (!passwordInput) {
+      setAuthError('Security token/password is required');
+      return;
+    }
+
+    const existingUsersStr = localStorage.getItem('cinevolt_users_registry');
+    const usersRegistry = existingUsersStr ? JSON.parse(existingUsersStr) : {};
+
     // Interactive Auth Simulation
     if (authMode === 'LOGIN') {
-      const mockUser: User = {
-        id: `user-${authRole.toLowerCase()}-${Date.now().toString().slice(-4)}`,
-        email: emailInput,
-        role: authRole,
-        name: emailInput.split('@')[0].toUpperCase(),
-        createdAt: new Date().toISOString(),
-        isSubscribed: false,
-        subscriptionPlan: null,
-        subscriptionExpiresAt: null
-      };
-
-      // If user logs in with an email we've seen before, let's keep their sub state if any
-      const existingUsersStr = localStorage.getItem('cinevolt_users_registry');
-      const usersRegistry = existingUsersStr ? JSON.parse(existingUsersStr) : {};
-      
-      if (usersRegistry[emailInput]) {
-        setActiveUser(usersRegistry[emailInput]);
-      } else {
-        usersRegistry[emailInput] = mockUser;
-        localStorage.setItem('cinevolt_users_registry', JSON.stringify(usersRegistry));
-        setActiveUser(mockUser);
+      const existingUser = usersRegistry[emailInput];
+      if (!existingUser) {
+        setAuthError('Account not found with this email. Please create an account.');
+        return;
       }
+
+      // Verify password (defaults to 'password' for legacy records if undefined)
+      const userPassword = existingUser.password || 'password';
+      if (userPassword !== passwordInput) {
+        setAuthError('Incorrect Security Token/Password. Please try again or use Forgot Password to reset.');
+        return;
+      }
+
+      // Ensure role matches during login or let it bind
+      const activeUserResolved: User = { ...existingUser, role: authRole };
+      setActiveUser(activeUserResolved);
+      
+      addToast({
+        title: "Logged In Successfully",
+        message: `Welcome back, ${activeUserResolved.name}! Active as a ${activeUserResolved.role}.`,
+        type: 'success'
+      });
     } else {
       // Register
+      if (usersRegistry[emailInput]) {
+        setAuthError('An account with this email already exists. Try signing in.');
+        return;
+      }
+
       const newUser: User = {
         id: `user-${authRole.toLowerCase()}-${Date.now().toString().slice(-4)}`,
         email: emailInput,
         role: authRole,
         name: nameInput,
+        password: passwordInput,
         createdAt: new Date().toISOString(),
         isSubscribed: false,
         subscriptionPlan: null,
         subscriptionExpiresAt: null
       };
 
-      const existingUsersStr = localStorage.getItem('cinevolt_users_registry');
-      const usersRegistry = existingUsersStr ? JSON.parse(existingUsersStr) : {};
-      
       usersRegistry[emailInput] = newUser;
       localStorage.setItem('cinevolt_users_registry', JSON.stringify(usersRegistry));
       setActiveUser(newUser);
+
+      addToast({
+        title: "Account Created!",
+        message: `Welcome, ${newUser.name}! Your account is now active as ${newUser.role}.`,
+        type: 'success'
+      });
     }
 
     // Reset fields
@@ -223,9 +298,85 @@ export default function App() {
     setPasswordInput('');
   };
 
+  // Password Recovery handler
+  const handleRequestRecovery = (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    if (!recoveryEmail) {
+      setAuthError('Email address is required');
+      return;
+    }
+    const existingUsersStr = localStorage.getItem('cinevolt_users_registry');
+    const usersRegistry = existingUsersStr ? JSON.parse(existingUsersStr) : {};
+    const user = usersRegistry[recoveryEmail];
+    if (!user) {
+      setAuthError('No active account found with this email. Please sign up.');
+      return;
+    }
+    
+    // Generate code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    setGeneratedCode(code);
+    setRecoveryStep('RESET_PASS');
+    
+    addToast({
+      title: "Recovery Code Dispatched",
+      message: `A secure verification code *${code}* has been generated for ${recoveryEmail}.`,
+      type: 'success'
+    });
+  };
+
+  // Password Reset confirmation handler
+  const handleResetPassword = (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    if (!recoveryCodeInput) {
+      setAuthError('Enter the 6-digit confirmation code');
+      return;
+    }
+    if (recoveryCodeInput !== generatedCode) {
+      setAuthError('Invalid/incorrect recovery code');
+      return;
+    }
+    if (!newPasswordInput) {
+      setAuthError('Enter your new security token / password');
+      return;
+    }
+    
+    const existingUsersStr = localStorage.getItem('cinevolt_users_registry');
+    const usersRegistry = existingUsersStr ? JSON.parse(existingUsersStr) : {};
+    if (usersRegistry[recoveryEmail]) {
+      usersRegistry[recoveryEmail].password = newPasswordInput;
+      localStorage.setItem('cinevolt_users_registry', JSON.stringify(usersRegistry));
+      
+      addToast({
+        title: "Password Updated Successfully!",
+        message: "Your credentials have been securely refreshed. You can now login.",
+        type: 'success'
+      });
+      
+      // Navigate back to login
+      setAuthMode('LOGIN');
+      setRecoveryStep('REQUEST');
+      setEmailInput(recoveryEmail); // prefill
+      setRecoveryEmail('');
+      setRecoveryCodeInput('');
+      setGeneratedCode('');
+      setNewPasswordInput('');
+    } else {
+      setAuthError('Error updating credentials. Please request code again.');
+    }
+  };
+
   const handleLogout = () => {
+    const prevName = activeUser?.name || 'User';
     setActiveUser(null);
     setCart([]);
+    addToast({
+      title: "Logged Out",
+      message: `See you next time, ${prevName}!`,
+      type: 'info'
+    });
   };
 
   // Trigger secure live Paystack Inline Checkout
@@ -236,21 +387,10 @@ export default function App() {
     onSuccess: (reference: string) => void;
     onCancel?: () => void;
   }) => {
-    // Check if we are in Sandbox (Simulator) Mode
-    if (gatewayMode === 'SANDBOX') {
-      setSimulatedCheckoutData(params);
-      setSelectedNetwork('MTN');
-      setSimulatedPhoneNumber('024' + Math.floor(1000000 + Math.random() * 9000000));
-      setSimulatedPin('');
-      setSimulatedCheckoutStep('NETWORK');
-      setIsSimulatedCheckoutOpen(true);
-      return;
-    }
-
     const publicKey = (customPublicKey || '').trim() || ((import.meta as any).env.VITE_PAYSTACK_PUBLIC_KEY || '').trim();
     if (!publicKey || !publicKey.startsWith('pk_')) {
       setPendingCheckoutData(params);
-      setPaystackKeyError("Your active Paystack Public Key is either missing or invalid. Please configure 'VITE_PAYSTACK_PUBLIC_KEY' (such as pk_live_... or pk_test_...) correctly in your AI Studio Project settings, or click 'Enter Key' in the top right to configure it locally. For instantaneous local testing without any real credentials, feel free to switch to Sandbox mode below.");
+      setPaystackKeyError("Your active Paystack Public Key is either missing or invalid. Please configure 'VITE_PAYSTACK_PUBLIC_KEY' (such as pk_live_... or pk_test_...) in your settings, or click 'Provide Paystack Key' to configure it locally.");
       return;
     }
 
@@ -312,7 +452,7 @@ export default function App() {
         script.onload = loadPaystackAndPay;
         script.onerror = () => {
           setPendingCheckoutData(params);
-          setPaystackKeyError("Failed to import Paystack Secure payment script library. Please check your connectivity, or try switching to local simulation sandbox below.");
+          setPaystackKeyError("Failed to import Paystack Secure payment script library. Please check your internet connectivity and reload the page.");
         };
         document.body.appendChild(script);
       } else {
@@ -347,6 +487,14 @@ export default function App() {
   // Movie Checkout processing
   const initiateCartCheckout = () => {
     if (!activeUser) return;
+    if (activeUser.role === 'PRODUCER') {
+      addToast({
+        title: "Purchase Restricted",
+        message: "Producers cannot buy movies. Under CineVault policy, you must log out and register/log in as a Buyer to purchase.",
+        type: 'error'
+      });
+      return;
+    }
     if (cart.length === 0) return;
 
     const totalCost = cart.reduce((acc, item) => acc + item.movie.priceCedis, 0);
@@ -369,6 +517,14 @@ export default function App() {
 
   const initiateInstantPurchase = (movie: Movie) => {
     if (!activeUser) return;
+    if (activeUser.role === 'PRODUCER') {
+      addToast({
+        title: "Purchase Restricted",
+        message: "Producers cannot buy movies. Under CineVault policy, you must log out and register/log in as a Buyer to purchase.",
+        type: 'error'
+      });
+      return;
+    }
     
     checkoutContextRef.current = {
       type: 'CART',
@@ -407,6 +563,12 @@ export default function App() {
       usersRegistry[activeUser.email] = updated;
       localStorage.setItem('cinevolt_users_registry', JSON.stringify(usersRegistry));
 
+      addToast({
+        title: "Subscription Active!",
+        message: `Welcome aboard! You now have unlimited listing privileges under the ${context.subPlanType === 'monthly' ? 'Monthly' : 'Annual'} Creator Plan.`,
+        type: 'success'
+      });
+
     } else if (context.type === 'CART') {
       // Record purchase
       const newlyPurchasedMovies = context.moviesToUnlock;
@@ -443,6 +605,23 @@ export default function App() {
       if (isFullCartPurchase) {
         setCart([]);
       }
+
+      // Trigger gorgeous success toasts for newly acquired movie(s)!
+      if (newlyPurchasedMovies.length === 1) {
+        addToast({
+          title: "Payment Successful!",
+          message: `Your payment was processed. You now have full lifetime access to stream "${newlyPurchasedMovies[0].title}".`,
+          type: 'purchase',
+          movieTitle: newlyPurchasedMovies[0].title,
+          coverUrl: newlyPurchasedMovies[0].coverUrl
+        });
+      } else {
+        addToast({
+          title: "Payment Successful!",
+          message: `Successfully unlocked digital rights & stream access to ${newlyPurchasedMovies.length} movies!`,
+          type: 'success'
+        });
+      }
     }
 
     checkoutContextRef.current = null;
@@ -453,28 +632,76 @@ export default function App() {
     setSelectedMovie(newMovie);
     setIsPlayingThriller(true);
     setActiveTab('DISCOVER');
+    addToast({
+      title: "Film Listed Successfully!",
+      message: `"${newMovie.title}" is now live on the cinema catalog at GH₵ ${newMovie.priceCedis}.`,
+      type: 'purchase',
+      movieTitle: newMovie.title,
+      coverUrl: newMovie.coverUrl
+    });
   };
 
   // Cart logic
   const addToCart = (movie: Movie) => {
-    if (cart.some(item => item.movie.id === movie.id)) return;
+    if (activeUser?.role === 'PRODUCER') {
+      addToast({
+        title: "Purchase Restricted",
+        message: "Producers cannot buy movies. Under CineVault policy, you must log out and register/log in as a Buyer to purchase.",
+        type: 'error'
+      });
+      return;
+    }
+    if (cart.some(item => item.movie.id === movie.id)) {
+      addToast({
+        title: "Already in Cart",
+        message: `"${movie.title}" is already in your selection.`,
+        type: 'info'
+      });
+      return;
+    }
     setCart(prev => [...prev, { movie, addedAt: new Date().toISOString() }]);
+    addToast({
+      title: "Added to MoMo Cart",
+      message: `"${movie.title}" successfully queued for checkout.`,
+      type: 'purchase',
+      movieTitle: movie.title,
+      coverUrl: movie.coverUrl
+    });
   };
 
   const removeFromCart = (movieId: string) => {
+    const item = cart.find(i => i.movie.id === movieId);
     setCart(prev => prev.filter(item => item.movie.id !== movieId));
+    if (item) {
+      addToast({
+        title: "Removed from Cart",
+        message: `"${item.movie.title}" has been removed.`,
+        type: 'info'
+      });
+    }
   };
 
   const isMoviePurchased = (movieId: string) => {
     if (!activeUser) return false;
-    // Producers automatically own their own movies
+    
     const m = movies.find(mv => mv.id === movieId);
-    if (m && m.producerId === activeUser.id) return true;
+    if (activeUser.role === 'PRODUCER') {
+      // Producers can only ever access their own uploaded movies
+      return m ? m.producerId === activeUser.id : false;
+    }
     
     return purchases.some(p => p.userId === activeUser.id && p.movieId === movieId);
   };
 
   const triggerMovieDownload = (movie: Movie) => {
+    if (activeUser?.role === 'PRODUCER') {
+      addToast({
+        title: "Download Restricted",
+        message: "Under CineVault safety policy, producers are not permitted to download full files from the marketplace.",
+        type: 'error'
+      });
+      return;
+    }
     if (downloadingMovieId) return;
     setDownloadingMovieId(movie.id);
     setGlobalDownloadProgress(0);
@@ -558,6 +785,11 @@ export default function App() {
 
   // Filter listings
   const filteredMovies = movies.filter(movie => {
+    // Access Control: Producers should only see and access their own uploaded movies
+    if (activeUser && activeUser.role === 'PRODUCER' && movie.producerId !== activeUser.id) {
+      return false;
+    }
+
     const matchesSearch = movie.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
                           movie.description.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = selectedCategory === 'All' || movie.category === selectedCategory;
@@ -584,48 +816,6 @@ export default function App() {
         {/* Action controls */}
         {activeUser ? (
           <div className="flex items-center gap-4">
-            {/* Gateway Switcher */}
-            <div className="flex items-center bg-sleek-card border border-sleek-border p-0.5 rounded-xl shrink-0">
-              <button
-                type="button"
-                onClick={() => setGatewayMode('SANDBOX')}
-                className={`px-2.5 py-1.5 rounded-lg text-[9px] uppercase tracking-wider font-extrabold transition-all cursor-pointer flex items-center gap-1 ${
-                  gatewayMode === 'SANDBOX'
-                    ? 'bg-amber-950/45 text-amber-500 font-black'
-                    : 'text-zinc-550 hover:text-zinc-350'
-                }`}
-                title="Switch to Local Simulator Gateway (Free)"
-              >
-                <span>🧪 Sandbox</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setGatewayMode('LIVE')}
-                className={`px-2.5 py-1.5 rounded-lg text-[9px] uppercase tracking-wider font-extrabold transition-all cursor-pointer flex items-center gap-1 ${
-                  gatewayMode === 'LIVE'
-                    ? 'bg-cyan-950/45 text-brand font-black'
-                    : 'text-zinc-550 hover:text-zinc-350'
-                }`}
-                title="Switch to Real Live Paystack Gateway"
-              >
-                <span>⚡ Live</span>
-              </button>
-              <div className="w-px h-3.5 bg-sleek-border/70 mx-1"></div>
-              <button
-                type="button"
-                onClick={() => setIsKeyModalOpen(true)}
-                className={`px-2.5 py-1.5 rounded-lg text-[9px] uppercase tracking-wider font-extrabold transition-all cursor-pointer flex items-center gap-1 ${
-                  customPublicKey.trim()
-                    ? 'text-emerald-400 hover:text-emerald-300'
-                    : 'text-zinc-500 hover:text-zinc-200'
-                }`}
-                title={customPublicKey.trim() ? "Live keys configured locally" : "Configure Custom Paystack API Keys"}
-              >
-                <span>🔑 Key</span>
-                {customPublicKey.trim() && <span className="w-1 h-1 bg-emerald-400 rounded-full animate-pulse"></span>}
-              </button>
-            </div>
-
             {/* User Metadata */}
             <div className="hidden sm:flex flex-col text-right">
               <span className="text-xs font-bold text-zinc-200 flex items-center gap-1.5 justify-end">
@@ -675,59 +865,39 @@ export default function App() {
               )}
             </div>
 
+            {/* About & Support button */}
+            <button
+              id="header-about-button-user"
+              onClick={() => setIsAboutModalOpen(true)}
+              className="px-3 py-2 border border-sleek-border bg-sleek-card text-zinc-300 hover:text-brand hover:border-brand/40 rounded-xl transition-all cursor-pointer hover:scale-102 flex items-center gap-2 text-xs font-bold"
+              title="About CineVault & Support Contacts"
+            >
+              <HelpCircle className="w-4 h-4 text-brand" />
+              <span className="hidden xs:inline">About & Help</span>
+            </button>
+
             {/* Logout button */}
             <button
+              id="header-logout-button"
               onClick={handleLogout}
-              className="p-2 border border-sleek-border bg-sleek-card text-zinc-300 hover:text-red-400 rounded-xl transition-all cursor-pointer hover:scale-102"
+              className="px-3 py-2 border border-sleek-border bg-sleek-card text-zinc-300 hover:text-red-400 rounded-xl transition-all cursor-pointer hover:scale-102 flex items-center gap-2 text-xs font-bold"
               title="Sign Out"
             >
-              <LogOut className="w-4.5 h-4.5" />
+              <LogOut className="w-4 h-4" />
+              <span id="logout-button-text">Sign Out</span>
             </button>
           </div>
         ) : (
           <div className="flex items-center gap-3">
-            {/* Gateway Switcher */}
-            <div className="flex items-center bg-sleek-card border border-sleek-border p-0.5 rounded-xl shrink-0">
-              <button
-                type="button"
-                onClick={() => setGatewayMode('SANDBOX')}
-                className={`px-2.5 py-1.5 rounded-lg text-[9px] uppercase tracking-wider font-extrabold transition-all cursor-pointer flex items-center gap-1 ${
-                  gatewayMode === 'SANDBOX'
-                    ? 'bg-amber-950/45 text-amber-500 font-black'
-                    : 'text-zinc-550 hover:text-zinc-350'
-                }`}
-                title="Switch to Local Simulator Gateway (Free)"
-              >
-                <span>🧪 Sandbox</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setGatewayMode('LIVE')}
-                className={`px-2.5 py-1.5 rounded-lg text-[9px] uppercase tracking-wider font-extrabold transition-all cursor-pointer flex items-center gap-1 ${
-                  gatewayMode === 'LIVE'
-                    ? 'bg-cyan-950/45 text-brand font-black'
-                    : 'text-zinc-550 hover:text-zinc-350'
-                }`}
-                title="Switch to Real Live Paystack Gateway"
-              >
-                <span>⚡ Live</span>
-              </button>
-              <div className="w-px h-3.5 bg-sleek-border/70 mx-1"></div>
-              <button
-                type="button"
-                onClick={() => setIsKeyModalOpen(true)}
-                className={`px-2.5 py-1.5 rounded-lg text-[9px] uppercase tracking-wider font-extrabold transition-all cursor-pointer flex items-center gap-1 ${
-                  customPublicKey.trim()
-                    ? 'text-emerald-400 hover:text-emerald-300'
-                    : 'text-zinc-500 hover:text-zinc-200'
-                }`}
-                title={customPublicKey.trim() ? "Live keys configured locally" : "Configure Custom Paystack API Keys"}
-              >
-                <span>🔑 Key</span>
-                {customPublicKey.trim() && <span className="w-1 h-1 bg-emerald-400 rounded-full animate-pulse"></span>}
-              </button>
-            </div>
-            
+            <button
+              id="header-about-button-guest"
+              onClick={() => setIsAboutModalOpen(true)}
+              className="px-3 py-2 border border-sleek-border bg-sleek-card text-zinc-300 hover:text-brand hover:border-brand/40 rounded-xl transition-all cursor-pointer flex items-center gap-2 text-xs font-bold"
+              title="About CineVault & Support Contacts"
+            >
+              <HelpCircle className="w-4 h-4 text-brand" />
+              <span>About & Support</span>
+            </button>
             <div className="hidden sm:flex text-xs text-zinc-500 font-bold tracking-wider uppercase border border-sleek-border bg-sleek-card py-1.5 px-3 rounded-lg items-center gap-1.5 whitespace-nowrap">
               <span className="w-1.5 h-1.5 rounded-full bg-brand animate-pulse"></span>
               <span>Secured Gateway</span>
@@ -753,7 +923,7 @@ export default function App() {
               <div className="lg:col-span-7 space-y-6 md:pr-8">
                 <div className="inline-flex items-center gap-2 bg-brand/10 border border-brand/20 px-3.5 py-1.5 rounded-full text-brand text-xs font-bold tracking-wider uppercase">
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>CineVault Ghana MoMo Theatre</span>
+                  <span>Gh movie market</span>
                 </div>
                 
                 <h1 className="text-4xl md:text-5xl font-extrabold text-white tracking-tight leading-none uppercase font-display">
@@ -830,85 +1000,212 @@ export default function App() {
                   </div>
 
                   {/* Auth mode toggle */}
-                  <div className="flex justify-center border-b border-sleek-border pb-4">
-                    <div className="inline-flex gap-4 text-xs font-bold">
-                      <button
-                        onClick={() => { setAuthMode('LOGIN'); setAuthError(''); }}
-                        className={authMode === 'LOGIN' ? 'text-brand border-b-2 border-brand pb-1' : 'text-zinc-500 hover:text-zinc-300'}
-                      >
-                        Sign In
-                      </button>
-                      <button
-                        onClick={() => { setAuthMode('REGISTER'); setAuthError(''); }}
-                        className={authMode === 'REGISTER' ? 'text-brand border-b-2 border-brand pb-1' : 'text-zinc-500 hover:text-zinc-300'}
-                      >
-                        Create Account
-                      </button>
-                    </div>
-                  </div>
-
-                  <form onSubmit={handleAuthSubmit} className="space-y-4">
-                    {authError && (
-                      <div className="bg-red-950/40 border border-red-500/20 text-red-400 px-4 py-3 rounded-xl text-xs flex items-center gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0"></span>
-                        <span>{authError}</span>
+                  {(authMode === 'LOGIN' || authMode === 'REGISTER') ? (
+                    <div className="flex justify-center border-b border-sleek-border pb-4">
+                      <div className="inline-flex gap-4 text-xs font-bold font-sans">
+                        <button
+                          type="button"
+                          onClick={() => { setAuthMode('LOGIN'); setAuthError(''); }}
+                          className={authMode === 'LOGIN' ? 'text-brand border-b-2 border-brand pb-1' : 'text-zinc-500 hover:text-zinc-300'}
+                        >
+                          Sign In
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setAuthMode('REGISTER'); setAuthError(''); }}
+                          className={authMode === 'REGISTER' ? 'text-brand border-b-2 border-brand pb-1' : 'text-zinc-500 hover:text-zinc-300'}
+                        >
+                          Create Account
+                        </button>
                       </div>
-                    )}
+                    </div>
+                  ) : (
+                    <div className="flex justify-center border-b border-sleek-border pb-4 text-xs font-bold text-zinc-400 font-sans">
+                      <span>🔑 Password Recovery Console</span>
+                    </div>
+                  )}
 
-                    {authMode === 'REGISTER' && (
+                  {(authMode === 'LOGIN' || authMode === 'REGISTER') ? (
+                    <form onSubmit={handleAuthSubmit} className="space-y-4">
+                      {authError && (
+                        <div className="bg-red-950/40 border border-red-500/20 text-red-400 px-4 py-3 rounded-xl text-xs flex items-center gap-2 font-sans">
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0"></span>
+                          <span>{authError}</span>
+                        </div>
+                      )}
+
+                      {authMode === 'REGISTER' && (
+                        <div className="space-y-1.5">
+                          <label htmlFor="name" className="text-xs font-bold text-zinc-300 block uppercase font-sans">Name / Studio</label>
+                          <input
+                            id="name"
+                            type="text"
+                            placeholder={authRole === 'PRODUCER' ? "e.g. Eagle Crest Films" : "e.g. Kofi Boateng"}
+                            value={nameInput}
+                            onChange={(e) => setNameInput(e.target.value)}
+                            className="w-full bg-sleek-dark border border-sleek-border rounded-xl px-4 py-3 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand font-semibold"
+                            required
+                          />
+                        </div>
+                      )}
+
                       <div className="space-y-1.5">
-                        <label htmlFor="name" className="text-xs font-bold text-zinc-300 block uppercase">Name / Studio</label>
+                        <label htmlFor="email" className="text-xs font-bold text-zinc-300 block uppercase font-sans">Email Address</label>
                         <input
-                          id="name"
-                          type="text"
-                          placeholder={authRole === 'PRODUCER' ? "e.g. Eagle Crest Films" : "e.g. Kofi Boateng"}
-                          value={nameInput}
-                          onChange={(e) => setNameInput(e.target.value)}
-                          className="w-full bg-sleek-dark border border-sleek-border rounded-xl px-4 py-3 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand font-semibold"
+                          id="email"
+                          type="email"
+                          placeholder="yourname@gmail.com"
+                          value={emailInput}
+                          onChange={(e) => setEmailInput(e.target.value)}
+                          className="w-full bg-sleek-dark border border-sleek-border rounded-xl px-4 py-3 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand font-semibold font-mono"
                           required
                         />
                       </div>
-                    )}
 
-                    <div className="space-y-1.5">
-                      <label htmlFor="email" className="text-xs font-bold text-zinc-300 block uppercase">Email Address</label>
-                      <input
-                        id="email"
-                        type="email"
-                        placeholder="yourname@gmail.com"
-                        value={emailInput}
-                        onChange={(e) => setEmailInput(e.target.value)}
-                        className="w-full bg-sleek-dark border border-sleek-border rounded-xl px-4 py-3 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand font-semibold font-mono"
-                        required
-                      />
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between font-sans">
+                          <label htmlFor="pass" className="text-xs font-bold text-zinc-300 block uppercase">Security Token/Password</label>
+                          {authMode === 'LOGIN' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAuthMode('RECOVERY');
+                                setRecoveryStep('REQUEST');
+                                setAuthError('');
+                                setRecoveryEmail(emailInput);
+                              }}
+                              className="text-[10px] text-brand hover:underline font-bold cursor-pointer font-sans"
+                            >
+                              forgot password?
+                            </button>
+                          )}
+                        </div>
+                        <input
+                          id="pass"
+                          type="password"
+                          placeholder="••••••••"
+                          value={passwordInput}
+                          onChange={(e) => setPasswordInput(e.target.value)}
+                          className="w-full bg-sleek-dark border border-sleek-border rounded-xl px-4 py-3 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand font-semibold font-mono"
+                          required
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        className="w-full py-3.5 bg-brand hover:bg-brand-hover text-slate-950 font-bold rounded-xl text-xs uppercase tracking-wider transition-all shadow-lg shadow-brand/10 cursor-pointer flex items-center justify-center gap-1 hover:scale-[1.01] font-sans"
+                      >
+                        <span>{authMode === 'LOGIN' ? 'Login' : 'Create Account'}</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    </form>
+                  ) : (
+                    /* RECOVERY / RESET FORMS */
+                    <div className="space-y-4">
+                      {authError && (
+                        <div className="bg-red-950/40 border border-red-500/20 text-red-400 px-4 py-3 rounded-xl text-xs flex items-center gap-2 font-sans">
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0"></span>
+                          <span>{authError}</span>
+                        </div>
+                      )}
+
+                      {recoveryStep === 'REQUEST' ? (
+                        <form onSubmit={handleRequestRecovery} className="space-y-4">
+                          <div className="space-y-1.5">
+                            <label htmlFor="recovery-email" className="text-xs font-bold text-zinc-300 block uppercase font-sans">Registered Email</label>
+                            <input
+                              id="recovery-email"
+                              type="email"
+                              placeholder="yourname@gmail.com"
+                              value={recoveryEmail}
+                              onChange={(e) => setRecoveryEmail(e.target.value)}
+                              className="w-full bg-sleek-dark border border-sleek-border rounded-xl px-4 py-3 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand font-semibold font-mono"
+                              required
+                            />
+                            <p className="text-[10px] text-zinc-500 leading-normal font-sans">
+                              We will look up your registered filmmaker/buyer account and generate a simulated verification OTP code.
+                            </p>
+                          </div>
+
+                          <div className="flex flex-col gap-2 pt-2">
+                            <button
+                              type="submit"
+                              className="w-full py-3 bg-brand hover:bg-brand-hover text-slate-950 font-bold rounded-xl text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 font-sans"
+                            >
+                              <span>Simulate OTP Dispatch</span>
+                              <Sparkles className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAuthMode('LOGIN');
+                                setAuthError('');
+                              }}
+                              className="w-full py-2.5 border border-sleek-border bg-sleek-dark/30 hover:bg-sleek-dark text-zinc-400 hover:text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer text-center font-sans"
+                            >
+                              Back to Login
+                            </button>
+                          </div>
+                        </form>
+                      ) : (
+                        <form onSubmit={handleResetPassword} className="space-y-4">
+                          <div className="bg-emerald-950/20 border border-emerald-500/15 p-3 rounded-xl text-[10px] text-zinc-400 font-sans leading-relaxed">
+                            💡 System sent a secure verification code to <span className="font-mono text-emerald-400 font-bold">{recoveryEmail}</span>. Read the simulated toast notification alert above for your 6-digit confirmation code.
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label htmlFor="recovery-code" className="text-xs font-bold text-zinc-300 block uppercase font-sans">OTP Code</label>
+                            <input
+                              id="recovery-code"
+                              type="text"
+                              maxLength={6}
+                              placeholder="e.g. 123456"
+                              value={recoveryCodeInput}
+                              onChange={(e) => setRecoveryCodeInput(e.target.value)}
+                              className="w-full bg-sleek-dark border border-sleek-border rounded-xl px-4 py-3 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand font-semibold font-mono"
+                              required
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label htmlFor="new-password" className="text-xs font-bold text-zinc-300 block uppercase font-sans">New Security Token / Password</label>
+                            <input
+                              id="new-password"
+                              type="password"
+                              placeholder="••••••••"
+                              value={newPasswordInput}
+                              onChange={(e) => setNewPasswordInput(e.target.value)}
+                              className="w-full bg-sleek-dark border border-sleek-border rounded-xl px-4 py-3 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand font-semibold font-mono"
+                              required
+                            />
+                          </div>
+
+                          <div className="flex flex-col gap-2 pt-2">
+                            <button
+                              type="submit"
+                              className="w-full py-3 bg-cyan-400 hover:bg-cyan-500 text-slate-950 font-bold rounded-xl text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 font-sans"
+                            >
+                              <span>Update & Reset Password</span>
+                              <CheckCircle className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRecoveryStep('REQUEST');
+                                setRecoveryCodeInput('');
+                                setGeneratedCode('');
+                                setNewPasswordInput('');
+                                setAuthError('');
+                              }}
+                              className="w-full py-2.5 border border-sleek-border bg-sleek-dark/30 hover:bg-sleek-dark text-zinc-400 hover:text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer text-center font-sans"
+                            >
+                              Request New OTP
+                            </button>
+                          </div>
+                        </form>
+                      )}
                     </div>
-
-                    <div className="space-y-1.5">
-                      <label htmlFor="pass" className="text-xs font-bold text-zinc-300 block uppercase">Security Token/Password</label>
-                      <input
-                        id="pass"
-                        type="password"
-                        placeholder="••••••••"
-                        value={passwordInput}
-                        onChange={(e) => setPasswordInput(e.target.value)}
-                        className="w-full bg-sleek-dark border border-sleek-border rounded-xl px-4 py-3 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand font-semibold font-mono"
-                      />
-                    </div>
-
-                    <button
-                      type="submit"
-                      className="w-full py-3.5 bg-brand hover:bg-brand-hover text-slate-950 font-bold rounded-xl text-xs uppercase tracking-wider transition-all shadow-lg shadow-brand/10 cursor-pointer flex items-center justify-center gap-1 hover:scale-[1.01]"
-                    >
-                      <span>Authorize as {authRole}</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </button>
-                  </form>
-
-                  <div className="border-t border-sleek-border pt-3 text-center">
-                    <p className="text-[10px] text-zinc-550 uppercase font-mono">
-                      🔑 Demo Accounts: Toggle roles instantly at checkout
-                    </p>
-                  </div>
+                  )}
                 </div>
               </div>
             </motion.div>
@@ -969,7 +1266,7 @@ export default function App() {
                             onClick={() => initiateSubscription('monthly')}
                             className="bg-sleek-card hover:bg-brand hover:text-black text-brand border border-sleek-border hover:border-brand py-2.5 px-4 rounded-lg text-xs font-bold uppercase tracking-wider transition-all cursor-pointer text-center"
                           >
-                            Pay via MoMo
+                            Pay
                           </button>
                         </div>
 
@@ -984,7 +1281,7 @@ export default function App() {
                             onClick={() => initiateSubscription('annual')}
                             className="bg-brand hover:bg-brand-hover text-black py-2.5 px-4 rounded-lg text-xs font-bold uppercase tracking-wider transition-all cursor-pointer text-center"
                           >
-                            Pay via MoMo
+                            Pay
                           </button>
                         </div>
                       </div>
@@ -1049,9 +1346,9 @@ export default function App() {
                             </div>
                           </div>
 
-                          {/* Demo/Helper Tools */}
+                          {/* Creator Guidelines */}
                           <div className="bg-sleek-card border border-sleek-border rounded-2xl p-5 space-y-3">
-                            <p className="text-xs font-bold text-zinc-300 uppercase">⚡ Sandbox Creator Tools</p>
+                            <p className="text-xs font-bold text-zinc-300 uppercase font-display">⚡ Live Creator Guidelines</p>
                             <p className="text-[11px] text-zinc-400 leading-relaxed">
                               To preview the buyer's storefront and checkout experience, you can toggle your active tab back to 
                               <strong> Browse Marketplace</strong>.
@@ -1067,6 +1364,31 @@ export default function App() {
                       <ProducerFinancials movies={movies} activeUser={activeUser} />
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* RESTRICTED ACCESS SCREEN FOR BUYERS TRYING TO ACCESS CREATOR_STUDIO */}
+              {activeTab === 'CREATOR_STUDIO' && activeUser.role !== 'PRODUCER' && (
+                <div id="buyer-restriction-panel" className="bg-sleek-card border border-rose-500/25 rounded-2xl p-8 max-w-xl mx-auto text-center space-y-6 shadow-2xl font-sans">
+                  <div className="w-16 h-16 rounded-full bg-rose-500/10 text-rose-450 border border-rose-500/20 flex items-center justify-center mx-auto">
+                    <Lock className="w-6 h-6 text-rose-500" />
+                  </div>
+                  <div className="space-y-2">
+                    <h2 className="text-lg font-bold text-white uppercase tracking-tight font-display">🔒 Access Restricted</h2>
+                    <p className="text-xs text-zinc-400 leading-relaxed">
+                      The Filmmaker Creator Suite is strictly exclusive to registered film Producers. 
+                      Since you are currently active on a <strong>Buyer</strong> account, this panel is restricted.
+                    </p>
+                  </div>
+                  <div className="pt-2">
+                    <button
+                      id="restricted-return-browse"
+                      onClick={() => setActiveTab('DISCOVER')}
+                      className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-755 border border-zinc-700 text-zinc-200 hover:text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-colors cursor-pointer inline-flex items-center gap-2"
+                    >
+                      Return to Browse Movies
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -1131,6 +1453,7 @@ export default function App() {
                           onAddToCart={addToCart}
                           onInstantBuy={initiateInstantPurchase}
                           isInCart={cart.some(i => i.movie.id === selectedMovie.id)}
+                          isProducer={activeUser?.role === 'PRODUCER'}
                         />
 
                         {/* Title details & Description */}
@@ -1151,7 +1474,14 @@ export default function App() {
                             <span className="text-[10px] text-zinc-500 font-bold uppercase">BACK THE CREATOR</span>
                             <span className="text-xl font-bold text-brand font-mono">GH₵ {selectedMovie.priceCedis.toFixed(2)}</span>
                             
-                            {isMoviePurchased(selectedMovie.id) ? (
+                            {activeUser?.role === 'PRODUCER' ? (
+                              <div className="space-y-1.5 w-full flex flex-col items-center sm:items-end">
+                                <p className="text-[9px] text-brand font-black uppercase tracking-widest animate-pulse">Your Uploaded Film</p>
+                                <div className="text-[9.5px] font-mono text-zinc-400 bg-zinc-950/20 px-3 py-1.5 rounded-xl border border-zinc-800 uppercase tracking-wide">
+                                  🔒 Download Disabled
+                                </div>
+                              </div>
+                            ) : isMoviePurchased(selectedMovie.id) ? (
                               <div className="space-y-1.5 w-full flex flex-col items-center sm:items-end">
                                 <p className="text-[9px] text-[#00F0FF] font-black uppercase tracking-widest animate-pulse">Ready to Watch</p>
                                 <button
@@ -1188,61 +1518,83 @@ export default function App() {
                       <div className="lg:col-span-4 space-y-6">
                         
                         {/* SHOPPING CART COMPONENT */}
-                        <div className="bg-sleek-card border border-sleek-border rounded-2xl p-5 md:p-6 space-y-4">
-                          <div className="flex items-center justify-between border-b border-sleek-border pb-3">
-                            <h3 className="text-xs font-bold text-zinc-200 uppercase tracking-wider flex items-center gap-1.5 font-display">
-                              <ShoppingCart className="w-4 h-4 text-brand" />
-                              <span>My Ticket Cart</span>
-                            </h3>
-                            <span className="text-[10px] bg-sleek-dark px-2 py-0.5 rounded-md font-bold text-zinc-400">
-                              {cart.length} Cut{cart.length !== 1 && 's'}
-                            </span>
-                          </div>
-
-                          {cart.length === 0 ? (
-                            <div className="py-8 text-center space-y-2">
-                              <p className="text-xs text-zinc-550 italic">Your cart is empty.</p>
-                              <p className="text-[10px] text-zinc-500">Tap a movie poster below and select "Add to Cart".</p>
+                        {activeUser?.role === 'PRODUCER' ? (
+                          <div id="producer-purchase-locked-panel" className="bg-sleek-card border border-rose-500/20 rounded-2xl p-5 md:p-6 space-y-4 font-sans">
+                            <div className="flex items-center gap-2 border-b border-sleek-border pb-3">
+                              <ShoppingCart className="w-4 h-4 text-rose-500" />
+                              <h3 className="text-xs font-bold text-zinc-200 uppercase tracking-wider font-display">
+                                Ticket Purchasing Locked
+                              </h3>
                             </div>
-                          ) : (
                             <div className="space-y-4">
-                              <div className="space-y-2 max-h-[160px] overflow-y-auto">
-                                {cart.map(item => (
-                                  <div key={item.movie.id} className="flex items-center gap-3 bg-sleek-dark p-2 border border-sleek-border rounded-xl">
-                                    <img src={item.movie.coverUrl} className="w-8 h-10 object-cover rounded-md" alt={item.movie.title} />
-                                    <div className="flex-1 truncate">
-                                      <p className="text-xs font-bold text-zinc-250 truncate">{item.movie.title}</p>
-                                      <p className="text-[10px] text-brand font-mono">GH₵ {item.movie.priceCedis.toFixed(2)}</p>
-                                    </div>
-                                    <button
-                                      onClick={() => removeFromCart(item.movie.id)}
-                                      className="p-1.5 text-zinc-500 hover:text-red-500 hover:bg-sleek-card rounded"
-                                      aria-label="Remove item"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                ))}
+                              <div className="p-4 bg-rose-950/20 border border-rose-500/20 rounded-xl space-y-2">
+                                <p className="text-[10px] font-black text-rose-450 uppercase tracking-widest text-center">Filmmaker Restricted</p>
+                                <p className="text-xs text-zinc-400 leading-relaxed text-center font-medium">
+                                  Under CineVault marketplace safety guidelines, accounts registered as <strong>film creators / producers</strong> cannot purchase ticket mastercuts.
+                                </p>
                               </div>
+                              <p className="text-[10px] text-zinc-500 leading-relaxed text-center font-medium block">
+                                To buy or view film cuts, please log out and register or log in with a dedicated <strong>Buyer Role</strong> account.
+                              </p>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="bg-sleek-card border border-sleek-border rounded-2xl p-5 md:p-6 space-y-4">
+                            <div className="flex items-center justify-between border-b border-sleek-border pb-3">
+                              <h3 className="text-xs font-bold text-zinc-200 uppercase tracking-wider flex items-center gap-1.5 font-display">
+                                <ShoppingCart className="w-4 h-4 text-brand" />
+                                <span>My Ticket Cart</span>
+                              </h3>
+                              <span className="text-[10px] bg-sleek-dark px-2 py-0.5 rounded-md font-bold text-zinc-400">
+                                {cart.length} Cut{cart.length !== 1 && 's'}
+                              </span>
+                            </div>
 
-                              <div className="border-t border-sleek-border pt-3 flex flex-col gap-3">
-                                <div className="flex items-center justify-between text-xs font-bold text-zinc-300">
-                                  <span>Total Cost:</span>
-                                  <span className="text-sm font-bold text-brand font-mono">
-                                    GH₵ {cart.reduce((sum, item) => sum + item.movie.priceCedis, 0).toFixed(2)}
-                                  </span>
+                            {cart.length === 0 ? (
+                              <div className="py-8 text-center space-y-2">
+                                <p className="text-xs text-zinc-550 italic">Your cart is empty.</p>
+                                <p className="text-[10px] text-zinc-500">Tap a movie poster below and select "Add to Cart".</p>
+                              </div>
+                            ) : (
+                              <div className="space-y-4">
+                                <div className="space-y-2 max-h-[160px] overflow-y-auto">
+                                  {cart.map(item => (
+                                    <div key={item.movie.id} className="flex items-center gap-3 bg-sleek-dark p-2 border border-sleek-border rounded-xl">
+                                      <img src={item.movie.coverUrl} className="w-8 h-10 object-cover rounded-md" alt={item.movie.title} />
+                                      <div className="flex-1 truncate">
+                                        <p className="text-xs font-bold text-zinc-250 truncate">{item.movie.title}</p>
+                                        <p className="text-[10px] text-brand font-mono">GH₵ {item.movie.priceCedis.toFixed(2)}</p>
+                                      </div>
+                                      <button
+                                        onClick={() => removeFromCart(item.movie.id)}
+                                        className="p-1.5 text-zinc-500 hover:text-red-500 hover:bg-sleek-card rounded"
+                                        aria-label="Remove item"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  ))}
                                 </div>
 
-                                <button
-                                  onClick={initiateCartCheckout}
-                                  className="w-full bg-[#00F0FF] hover:bg-[#33F3FF] text-black py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all cursor-pointer shadow shadow-cyan-900/10 text-center"
-                                >
-                                  Checkout Cart via Paystack MoMo
-                                </button>
+                                <div className="border-t border-sleek-border pt-3 flex flex-col gap-3">
+                                  <div className="flex items-center justify-between text-xs font-bold text-zinc-300">
+                                    <span>Total Cost:</span>
+                                    <span className="text-sm font-bold text-brand font-mono">
+                                      GH₵ {cart.reduce((sum, item) => sum + item.movie.priceCedis, 0).toFixed(2)}
+                                    </span>
+                                  </div>
+
+                                  <button
+                                    onClick={initiateCartCheckout}
+                                    className="w-full bg-[#00F0FF] hover:bg-[#33F3FF] text-black py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all cursor-pointer shadow shadow-cyan-900/10 text-center"
+                                  >
+                                    Checkout Cart via Paystack MoMo
+                                  </button>
+                                </div>
                               </div>
-                            </div>
-                          )}
-                        </div>
+                            )}
+                          </div>
+                        )}
 
                         {/* PURCHASED HISTORY BADGE LIST */}
                         {activeUser.role !== 'PRODUCER' && (
@@ -1442,18 +1794,32 @@ export default function App() {
                                   <div className="flex gap-2">
                                     {/* Add to Cart button */}
                                     {!bought && (
-                                      <button
-                                        onClick={() => addToCart(movie)}
-                                        disabled={cart.some(i => i.movie.id === movie.id)}
-                                        className={`px-2.5 py-1.5 rounded-lg border text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer ${
-                                          cart.some(i => i.movie.id === movie.id)
-                                            ? 'bg-sleek-card border-sleek-border text-zinc-600 cursor-not-allowed'
-                                            : 'bg-sleek-dark border-sleek-border hover:border-brand/40 text-zinc-300 hover:text-brand'
-                                        }`}
-                                        title="Add ticket to Cart"
-                                      >
-                                        <ShoppingCart className="w-3.5 h-3.5" />
-                                      </button>
+                                      activeUser?.role === 'PRODUCER' ? (
+                                        <button
+                                          onClick={() => addToast({
+                                            title: "Purchase Restricted",
+                                            message: "Producers cannot buy movies. Under CineVault safety policies, log out and log in as a Buyer to purchase.",
+                                            type: 'error'
+                                          })}
+                                          className="px-2.5 py-1.5 rounded-lg border border-rose-500/20 bg-rose-950/10 text-rose-455 hover:bg-rose-950/25 transition-colors cursor-pointer"
+                                          title="Producers cannot purchase movies"
+                                        >
+                                          <ShoppingCart className="w-3.5 h-3.5" />
+                                        </button>
+                                      ) : (
+                                        <button
+                                          onClick={() => addToCart(movie)}
+                                          disabled={cart.some(i => i.movie.id === movie.id)}
+                                          className={`px-2.5 py-1.5 rounded-lg border text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer ${
+                                            cart.some(i => i.movie.id === movie.id)
+                                              ? 'bg-sleek-card border-sleek-border text-zinc-600 cursor-not-allowed'
+                                              : 'bg-sleek-dark border-sleek-border hover:border-brand/40 text-zinc-300 hover:text-brand'
+                                          }`}
+                                          title="Add ticket to Cart"
+                                        >
+                                          <ShoppingCart className="w-3.5 h-3.5" />
+                                        </button>
+                                      )
                                     )}
 
                                     {/* Play watch channel switcher */}
@@ -1488,18 +1854,65 @@ export default function App() {
       </main>
 
       {/* FOOTER METRICS SYSTEM */}
-      <footer className="mt-auto bg-sleek-dark border-t border-sleek-border py-6 text-center text-xs text-zinc-500 px-4">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4 font-sans">
-          <p className="leading-relaxed text-zinc-450">
-            © 2026 CineVault Inc. Empowering independent Ghanaian filmmakers via secure Mobile Money streams.
+      <footer className="mt-auto bg-sleek-dark border-t border-sleek-border pt-10 pb-8 text-xs text-zinc-500 px-4 md:px-8">
+        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-12 gap-8 font-sans pb-8 border-b border-sleek-border/40">
+          
+          {/* About Column */}
+          <div className="md:col-span-5 space-y-3 pr-4">
+            <div className="flex items-center gap-2">
+              <Film className="w-4 h-4 text-brand" />
+              <span className="text-white text-xs font-black uppercase tracking-wider">About CineVault</span>
+            </div>
+            <p className="text-zinc-450 leading-relaxed text-[11px]">
+              CineVault is an ultimate cinema ecosystem dedicated to pioneering sovereign film distribution across Ghana. By allowing secure direct-to-fan subscription systems, offline-first theater previews, and real-time electronic payouts, we protect and power sovereign Ghanaian filmmakers.
+            </p>
+          </div>
+
+          {/* Quick Contacts Column */}
+          <div className="md:col-span-4 space-y-3">
+            <span className="text-white text-xs font-black uppercase tracking-wider block">Hotlines & Support</span>
+            <div className="space-y-2 text-[11px] text-zinc-400 font-mono">
+              <a href="tel:0543198585" className="flex items-center gap-2 hover:text-brand transition-colors">
+                <span className="text-zinc-500 border border-zinc-800 bg-zinc-950/40 px-1 py-0.5 rounded text-[8px] font-bold">ADMIN</span>
+                <span className="font-bold text-zinc-350">054 319 8585</span>
+              </a>
+              <a href="tel:0559071892" className="flex items-center gap-2 hover:text-brand transition-colors">
+                <span className="text-cyan-400 border border-cyan-400/15 bg-cyan-400/5 px-1 py-0.5 rounded text-[8px] font-bold">CUSTOMER SERVICE</span>
+                <span className="font-bold text-zinc-350">055 907 1892</span>
+              </a>
+            </div>
+          </div>
+
+          {/* Location & HQ Column */}
+          <div className="md:col-span-3 space-y-3">
+            <span className="text-white text-xs font-black uppercase tracking-wider block">Headquarters</span>
+            <div className="space-y-1.5 text-[11px] text-zinc-450">
+              <div className="flex items-start gap-2">
+                <MapPin className="w-3.5 h-3.5 text-brand shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold text-zinc-350">CineVault Digital HQ</p>
+                  <p className="text-zinc-400 font-mono text-[10.5px]">EN145-1358, KOFORIDUA</p>
+                  <p className="text-zinc-500">Eastern Region, Ghana</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        {/* Footer bottom bar */}
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 font-sans pt-6">
+          <p className="leading-relaxed text-zinc-550 text-[10.5px]">
+            © 2026 CineVault Inc. Empowering independent Ghanaian filmmakers.
           </p>
-          <div className="flex items-center gap-4 text-[10px] uppercase font-bold tracking-widest text-brand">
-            <span className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 bg-brand rounded-full animate-ping"></span>
-              <span>Gateway Live</span>
-            </span>
-            <span>•</span>
-            <span>Paystack Secure Stream Active</span>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsAboutModalOpen(true)}
+              className="text-[10px] uppercase font-bold tracking-widest text-brand hover:text-white transition-all flex items-center gap-1.5 border border-brand/20 bg-brand/5 hover:bg-brand/10 hover:border-brand/30 px-3 py-1.5 rounded-lg cursor-pointer"
+            >
+              <Info className="w-3.5 h-3.5" />
+              <span>Full Directory & Info</span>
+            </button>
           </div>
         </div>
       </footer>
@@ -1507,7 +1920,7 @@ export default function App() {
       {/* Dynamic Key Error Modal */}
       <AnimatePresence>
         {paystackKeyError && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm">
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -1524,242 +1937,43 @@ export default function App() {
                 {paystackKeyError}
               </p>
               
-              <div className="bg-amber-950/20 border border-amber-500/15 p-3 rounded-xl flex items-start gap-2 text-[11px] text-amber-400">
+              <div className="bg-blue-950/25 border border-blue-500/15 p-3 rounded-xl flex items-start gap-2 text-[11px] text-zinc-400">
                 <span className="text-sm shrink-0">💡</span>
                 <p className="leading-relaxed">
-                  <strong>Sandbox Testing Bypass available:</strong> You don't need a real API key. Click <strong>Switch to Sandbox</strong> below to instantly process purchases using our high-fidelity Mobile Money simulator.
+                  Provide your Paystack Public Key to accept real Mobile Money (MTN, Telecel, AirtelTigo) and card payments securely in Ghana.
                 </p>
               </div>
 
-              <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2.5">
+              <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2 px-1">
+                <button
+                  onClick={() => {
+                    const sampleRef = `REF-SIM-${Date.now()}`;
+                    setPaystackKeyError(null);
+                    setPendingCheckoutData(null);
+                    handlePaystackSuccess(sampleRef);
+                  }}
+                  className="px-4 py-2 bg-brand/10 border border-brand/20 hover:border-brand/50 hover:bg-brand/25 text-brand rounded-lg text-xs font-bold transition-all cursor-pointer text-center font-display"
+                >
+                  ⚡ Simulate Success (Demo)
+                </button>
                 <button
                   onClick={() => {
                     setPaystackKeyError(null);
                     setPendingCheckoutData(null);
                   }}
-                  className="px-4 py-2 bg-sleek-dark border border-sleek-border hover:border-zinc-700 hover:text-white text-zinc-400 rounded-lg text-xs font-bold transition-all cursor-pointer text-center"
+                  className="px-4 py-2 bg-sleek-dark border border-sleek-border hover:border-zinc-700 hover:text-white text-zinc-455 rounded-lg text-xs font-bold transition-all cursor-pointer text-center"
                 >
                   Dismiss Notice
                 </button>
                 <button
                   onClick={() => {
-                    setGatewayMode('SANDBOX');
                     setPaystackKeyError(null);
-                    if (pendingCheckoutData) {
-                      // Trigger with sandbox
-                      const data = pendingCheckoutData;
-                      setPendingCheckoutData(null);
-                      // Execute next macro-tick
-                      setTimeout(() => {
-                        triggerPaystackCheckout(data);
-                      }, 100);
-                    }
+                    setIsKeyModalOpen(true);
                   }}
-                  className="px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer text-center shadow shadow-orange-950/20"
+                  className="px-4 py-2 bg-brand text-black hover:bg-brand/90 hover:scale-[1.02] rounded-lg text-xs font-bold transition-all cursor-pointer text-center font-display"
                 >
-                  🧪 Switch to Sandbox
+                  🔑 Provide Key
                 </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* SOVEREIGN MOMO / CARD SANDBOX SIMULATOR MODAL */}
-      <AnimatePresence>
-        {isSimulatedCheckoutOpen && simulatedCheckoutData && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="w-full max-w-sm bg-sleek-card border border-amber-500/20 rounded-2xl overflow-hidden shadow-2xl font-sans"
-            >
-              {/* Header Visual Stripe */}
-              <div className="bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-yellow-500/20 px-5 py-3.5 border-b border-sleek-border flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 bg-amber-500 rounded-full animate-ping"></span>
-                  <span className="text-[10px] uppercase font-black tracking-widest text-amber-500">MOMO DEVELOPER SANDBOX</span>
-                </div>
-                <button
-                  onClick={() => {
-                    setIsSimulatedCheckoutOpen(false);
-                    if (simulatedCheckoutData.onCancel) simulatedCheckoutData.onCancel();
-                    setSimulatedCheckoutData(null);
-                  }}
-                  className="text-zinc-500 hover:text-zinc-300 transition-colors text-xs"
-                >
-                  ✕ Cancel
-                </button>
-              </div>
-
-              {/* Main Body */}
-              <div className="p-5 space-y-5">
-                {/* Checkout summary panel */}
-                <div className="bg-sleek-dark p-3.5 rounded-xl border border-sleek-border space-y-1 text-center">
-                  <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wide">SECURE CHANNELS ESCROW PAYOUT</span>
-                  <p className="text-xl font-black font-mono text-brand">GH₵ {simulatedCheckoutData.amount.toFixed(2)}</p>
-                  <p className="text-[10px] text-zinc-400 truncate">For {simulatedCheckoutData.itemName}</p>
-                </div>
-
-                {/* Step contents */}
-                {simulatedCheckoutStep === 'NETWORK' && (
-                  <div className="space-y-4">
-                    <div className="space-y-1.5 animate-fadeIn">
-                      <label className="text-[10px] text-zinc-500 uppercase font-black tracking-wider">Select Mobile Network</label>
-                      <div className="grid grid-cols-3 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedNetwork('MTN')}
-                          className={`p-2.5 rounded-xl border flex flex-col items-center gap-1 cursor-pointer transition-all ${
-                            selectedNetwork === 'MTN'
-                              ? 'bg-amber-950/30 border-amber-500/50 text-amber-500'
-                              : 'bg-sleek-dark border-sleek-border text-zinc-400 hover:border-zinc-700'
-                          }`}
-                        >
-                          <span className="text-xs font-black">MTN</span>
-                          <span className="text-[8px] font-bold">MoMo 💛</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedNetwork('TELECEL')}
-                          className={`p-2.5 rounded-xl border flex flex-col items-center gap-1 cursor-pointer transition-all ${
-                            selectedNetwork === 'TELECEL'
-                              ? 'bg-rose-950/30 border-rose-500/50 text-rose-500'
-                              : 'bg-sleek-dark border-sleek-border text-zinc-400 hover:border-zinc-700'
-                          }`}
-                        >
-                          <span className="text-xs font-black">Telecel</span>
-                          <span className="text-[8px] font-bold">Cash ❤️</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedNetwork('AIRTELTIGO')}
-                          className={`p-2.5 rounded-xl border flex flex-col items-center gap-1 cursor-pointer transition-all ${
-                            selectedNetwork === 'AIRTELTIGO'
-                              ? 'bg-sky-950/30 border-sky-500/50 text-sky-400'
-                              : 'bg-sleek-dark border-sleek-border text-zinc-400 hover:border-zinc-700'
-                          }`}
-                        >
-                          <span className="text-xs font-black">AirtelTigo</span>
-                          <span className="text-[8px] font-bold">Money 💙</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] text-zinc-500 uppercase font-black tracking-wider">Recipient Phone Number</label>
-                      <input
-                        type="text"
-                        value={simulatedPhoneNumber}
-                        onChange={(e) => setSimulatedPhoneNumber(e.target.value)}
-                        className="w-full bg-sleek-dark border border-sleek-border rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-zinc-650 focus:outline-none focus:border-amber-500/40 font-mono"
-                        placeholder="e.g. 0244123456"
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => setSimulatedCheckoutStep('PUSH_SENT')}
-                      className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-black uppercase tracking-wider text-[11px] py-3 rounded-xl transition-colors cursor-pointer text-center"
-                    >
-                      Authorize MoMo Push Prompt 🚀
-                    </button>
-                  </div>
-                )}
-
-                {simulatedCheckoutStep === 'PUSH_SENT' && (
-                  <div className="space-y-4 animate-fadeIn">
-                    {/* Simulated hand push notification UI popup */}
-                    <div className="bg-sleek-dark p-4 rounded-xl border-2 border-amber-500/40 relative overflow-hidden space-y-3">
-                      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-amber-500 to-orange-500 animate-pulse" />
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm">📱</span>
-                        <p className="text-[10px] font-extrabold text-[#00F0FF] uppercase tracking-wider">Simulated USSD Push Mandate</p>
-                      </div>
-                      <p className="text-xs text-zinc-200 font-sans leading-relaxed">
-                        Pay <strong>GH₵ {simulatedCheckoutData.amount.toFixed(2)}</strong> to CineVault secure escrow canopy?<br />
-                        <span className="text-zinc-500 text-[10px]">Reference: Sandbox Mastercut Purchase</span>
-                      </p>
-                      
-                      <div className="pt-2 space-y-2">
-                        <p className="text-[9px] text-zinc-500 font-bold uppercase">Enter 4-digit Sandbox Pin</p>
-                        <input
-                          type="password"
-                          maxLength={4}
-                          value={simulatedPin}
-                          onChange={(e) => {
-                            const val = e.target.value.replace(/[^0-9]/g, '');
-                            setSimulatedPin(val);
-                            if (val.length === 4) {
-                              setSimulatedCheckoutStep('PROCESSING');
-                              setTimeout(() => {
-                                setSimulatedCheckoutStep('SUCCESS');
-                              }, 1800);
-                            }
-                          }}
-                          className="w-24 tracking-widest text-center text-sm font-bold bg-sleek-card border border-sleek-border focus:border-amber-500/50 text-white rounded-lg py-1.5 focus:outline-none font-mono"
-                          placeholder="••••"
-                        />
-                        <p className="text-[9px] text-zinc-500 italic">Enter any 4 digits to simulate safe transaction validation</p>
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSimulatedCheckoutStep('PROCESSING');
-                        setTimeout(() => {
-                          setSimulatedCheckoutStep('SUCCESS');
-                        }, 1800);
-                      }}
-                      className="w-full bg-sleek-dark border border-sleek-border hover:border-zinc-700 text-zinc-300 font-bold text-xs py-2 rounded-xl transition-all cursor-pointer"
-                    >
-                      Bypass to success directly
-                    </button>
-                  </div>
-                )}
-
-                {simulatedCheckoutStep === 'PROCESSING' && (
-                  <div className="py-8 text-center space-y-4 animate-pulse">
-                    <div className="relative w-12 h-12 mx-auto">
-                      <div className="w-12 h-12 rounded-full border-2 border-amber-500/20 absolute inset-0" />
-                      <div className="w-12 h-12 rounded-full border-t-2 border-r-2 border-amber-500 animate-spin absolute inset-0" />
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-xs font-bold text-white uppercase tracking-wider">Verifying Gateway Settlement...</p>
-                      <p className="text-[10px] text-zinc-550 max-w-[200px] mx-auto leading-relaxed">Securing direct-to-creator payout ratios structure.</p>
-                    </div>
-                  </div>
-                )}
-
-                {simulatedCheckoutStep === 'SUCCESS' && (
-                  <div className="text-center space-y-5 py-4 animate-scaleUp">
-                    <div className="w-12 h-12 rounded-full bg-emerald-950/40 border border-emerald-500/30 flex items-center justify-center mx-auto text-emerald-400">
-                      <CheckCircle className="w-6 h-6 shrink-0" />
-                    </div>
-                    
-                    <div className="space-y-1">
-                      <h4 className="text-sm font-bold uppercase tracking-wider text-white font-display">Receipt Settled!</h4>
-                      <p className="text-xs text-zinc-400 leading-relaxed max-w-[240px] mx-auto">
-                        Simulated checkout cleared. The cinematic cut is unlocked, and box office charts updated.
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsSimulatedCheckoutOpen(false);
-                        const ref = `CV-SANDBOX-${Date.now()}`;
-                        simulatedCheckoutData.onSuccess(ref);
-                        setSimulatedCheckoutData(null);
-                      }}
-                      className="inline-flex items-center justify-center w-full px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black rounded-xl text-xs font-bold transition-all cursor-pointer"
-                    >
-                      Complete Checkout 🎬
-                    </button>
-                  </div>
-                )}
               </div>
             </motion.div>
           </div>
@@ -1872,6 +2086,126 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* ABOUT CINEVAULT & DIRECTORY MODAL */}
+      <AnimatePresence>
+        {isAboutModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="w-full max-w-lg bg-sleek-card border border-brand/35 rounded-2xl overflow-hidden shadow-2xl font-sans"
+            >
+              {/* Header */}
+              <div className="bg-gradient-to-r from-brand/10 via-cyan-500/15 to-sleek-dark px-6 py-4 border-b border-sleek-border flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <span className="p-1.5 rounded-lg bg-brand/10 text-brand border border-brand/25">
+                    <Info className="w-4 h-4" />
+                  </span>
+                  <div>
+                    <h3 className="text-xs font-black uppercase tracking-wider text-white font-display">About & Help center</h3>
+                    <p className="text-[9.5px] text-zinc-500 font-medium">Official directory, locations & customer hotline</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsAboutModalOpen(false)}
+                  className="text-zinc-450 hover:text-white transition-colors cursor-pointer w-7 h-7 rounded-full hover:bg-zinc-950/40 flex items-center justify-center border border-transparent hover:border-sleek-border"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Content Body */}
+              <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+                
+                {/* 1. About Cinevault */}
+                <div className="space-y-2.5">
+                  <h4 className="text-[10px] text-zinc-500 uppercase font-black tracking-wider flex items-center gap-1.5 border-b border-sleek-border/40 pb-1.5">
+                    <Film className="w-3.5 h-3.5 text-brand" />
+                    Our Mission
+                  </h4>
+                  <p className="text-xs text-zinc-350 leading-relaxed">
+                    CineVault is Ghana's first completely secure, direct-to-fan sovereign movie platform, built to empower local independent filmmakers. We enable creators to upload movie cuts, sell master access keys, manage physical e-zwich payouts, and protect film intellectual property from traditional distribution monopolies. 
+                  </p>
+                </div>
+
+                {/* 2. Official Hotlines */}
+                <div className="space-y-2.5">
+                  <h4 className="text-[10px] text-zinc-500 uppercase font-black tracking-wider flex items-center gap-1.5 border-b border-sleek-border/40 pb-1.5">
+                    <Phone className="w-3.5 h-3.5 text-cyan-400" />
+                    Official Support Hotlines
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="bg-sleek-dark/60 border border-sleek-border/50 rounded-xl p-3.5 space-y-1">
+                      <span className="text-[8px] font-black uppercase tracking-wider text-zinc-500 font-mono px-1.5 py-0.5 bg-zinc-950/40 rounded border border-zinc-800">FILMMAKER ADMIN</span>
+                      <p className="text-xs font-black font-mono text-zinc-200 pt-1.5">054 319 8585</p>
+                      <p className="text-[9px] text-zinc-550 leading-relaxed">For producer queries, bulk movie registrations, and settlements.</p>
+                      <a href="tel:0543198585" className="inline-flex text-[9px] font-bold text-brand uppercase tracking-wider hover:underline mt-2">Call Direct →</a>
+                    </div>
+
+                    <div className="bg-sleek-dark/60 border border-sleek-border/50 rounded-xl p-3.5 space-y-1">
+                      <span className="text-[8px] font-black uppercase tracking-wider text-cyan-400 font-mono px-1.5 py-0.5 bg-cyan-400/10 rounded border border-cyan-400/20">CUSTOMER SERVICE</span>
+                      <p className="text-xs font-black font-mono text-cyan-400 pt-1.5">055 907 1892</p>
+                      <p className="text-[9px] text-zinc-550 leading-relaxed">For ticketing assists, checkout issues, and billing enquiries.</p>
+                      <a href="tel:0559071892" className="inline-flex text-[9px] font-bold text-cyan-400 uppercase tracking-wider hover:underline mt-2">Call Customer Care →</a>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Address Location */}
+                <div className="space-y-2.5">
+                  <h4 className="text-[10px] text-zinc-500 uppercase font-black tracking-wider flex items-center gap-1.5 border-b border-sleek-border/40 pb-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-red-400" />
+                    Corporate Headquarters
+                  </h4>
+                  <div className="bg-sleek-dark/60 border border-sleek-border/50 rounded-xl p-4 flex items-start gap-3.5">
+                    <div className="p-2.5 bg-red-500/10 rounded-xl border border-red-500/15 shrink-0 text-red-400">
+                      <MapPin className="w-5 h-5" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-bold text-zinc-200">CineVault Digital Hub</p>
+                      <p className="text-xs font-black text-brand font-mono tracking-wide">EN145-1358, KOFORIDUA</p>
+                      <p className="text-[10px] text-zinc-500 font-medium">Eastern Region, Ghana</p>
+                      <p className="text-[9.5px] text-zinc-550 pt-0.5 leading-relaxed">
+                        Physical digital infrastructure office. Hours: Monday - Friday (08:00 AM - 05:00 PM UTC).
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Interbank Disclaimer */}
+                <div className="bg-cyan-950/20 border border-cyan-500/15 p-3 rounded-xl flex items-start gap-2.5 text-[10px] text-zinc-450 leading-relaxed font-sans">
+                  <span className="text-sm shrink-0">🏛️</span>
+                  <span>
+                    Our clearing integrations process directly via ISO 20022 and GhIPSS Interoperability, maintaining fully auditable trace balances for all registered Ghanaian accounts.
+                  </span>
+                </div>
+
+              </div>
+
+              {/* Footer action button */}
+              <div className="bg-sleek-dark px-6 py-4 border-t border-sleek-border flex items-center justify-end">
+                <button
+                  type="button"
+                  onClick={() => setIsAboutModalOpen(false)}
+                  className="px-5 py-2.5 bg-brand hover:bg-brand-hover text-black rounded-lg text-xs font-black uppercase tracking-wider cursor-pointer transition-all hover:scale-[1.02]"
+                >
+                  Close Directory
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Global Toast Notification System */}
+      <ToastNotification 
+        toasts={toasts} 
+        onClose={removeToast} 
+        onWatchMovie={handleWatchMovieFromToast} 
+      />
     </div>
   );
 }

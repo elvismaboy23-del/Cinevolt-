@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, RefreshCw, ShoppingCart, Lock, AlertTriangle, FastForward, Clock, Volume2, VolumeX, Download } from 'lucide-react';
+import { Play, Pause, RefreshCw, ShoppingCart, Lock, AlertTriangle, Clock, Volume2, VolumeX, Download } from 'lucide-react';
 import { Movie } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -10,6 +10,7 @@ interface CinemaPlayerProps {
   onAddToCart: (movie: Movie) => void;
   onInstantBuy: (movie: Movie) => void;
   isInCart: boolean;
+  isProducer?: boolean;
 }
 
 export default function CinemaPlayer({
@@ -19,6 +20,7 @@ export default function CinemaPlayer({
   onAddToCart,
   onInstantBuy,
   isInCart,
+  isProducer = false,
 }: CinemaPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [secondsRemaining, setSecondsRemaining] = useState(300); // 5 minutes = 300 seconds
@@ -31,6 +33,7 @@ export default function CinemaPlayer({
   const [downloadProgress, setDownloadProgress] = useState(0);
 
   const startDownload = () => {
+    if (isProducer) return;
     if (isDownloading) return;
     setIsDownloading(true);
     setDownloadProgress(0);
@@ -175,14 +178,7 @@ export default function CinemaPlayer({
     }
   };
 
-  // Skip mechanism to make it convenient to evaluate the 5-min threshold
-  const fastForwardToLimit = () => {
-    setSecondsRemaining(5); // skip to last 5 seconds
-    setIsPlaying(true);
-    if (videoRef.current) {
-      videoRef.current.play().catch(() => {});
-    }
-  };
+
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -226,20 +222,10 @@ export default function CinemaPlayer({
         </div>
       )}
 
-      {/* Fast Forward Sim Trigger */}
-      {isPlayingThriller && !isPurchased && !previewEnded && (
-        <button
-          onClick={fastForwardToLimit}
-          className="absolute top-4 right-4 z-10 pointer-events-auto flex items-center gap-1 bg-sleek-card/85 hover:bg-sleek-dark border border-sleek-border hover:border-brand/50 text-brand text-[10px] uppercase font-bold tracking-widest px-2.5 py-1.5 rounded-lg shadow-lg shadow-black/30 transition-colors cursor-pointer"
-          title="Demo Feature: Fast-forward to test 5-minute lockout screen"
-        >
-          <FastForward className="w-3.5 h-3.5" />
-          <span>Demo: Skip to Limit</span>
-        </button>
-      )}
+
 
       {/* Purchased Download Trigger Button */}
-      {isPurchased && (
+      {isPurchased && !isProducer && (
         <button
           onClick={startDownload}
           disabled={isDownloading}

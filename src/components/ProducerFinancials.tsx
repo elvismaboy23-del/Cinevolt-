@@ -1,21 +1,12 @@
-import React, { useState, useMemo } from 'react';
-import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend } from 'recharts';
-import { TrendingUp, Coins, Film, Award, HelpCircle, Sparkles, FolderOpen, ArrowUpRight } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from 'recharts';
+import { TrendingUp, Coins, Film, Award, FolderOpen } from 'lucide-react';
 import { Movie, User } from '../types';
 
 interface ProducerFinancialsProps {
   movies: Movie[];
   activeUser: User;
 }
-
-// Sandbox Industry Demo Data for empty state preview
-const DEMO_FINANCIALS = [
-  { title: "The Burial of Kojo", priceCedis: 50, purchaseCount: 120, revenue: 6000, color: "#00F0FF" },
-  { title: "Keteke", priceCedis: 40, purchaseCount: 85, revenue: 3400, color: "#8B5CF6" },
-  { title: "Aloe Vera", priceCedis: 45, purchaseCount: 72, revenue: 3240, color: "#EC4899" },
-  { title: "Azali", priceCedis: 50, purchaseCount: 40, revenue: 2000, color: "#10B981" },
-  { title: "Coz of Moni", priceCedis: 30, purchaseCount: 45, revenue: 1350, color: "#F59E0B" }
-];
 
 export default function ProducerFinancials({ movies, activeUser }: ProducerFinancialsProps) {
   // Filter movies created by the currently logged-in producer
@@ -41,16 +32,8 @@ export default function ProducerFinancials({ movies, activeUser }: ProducerFinan
     return liveFinancials.length > 0 && liveFinancials.some(f => f.revenue > 0);
   }, [liveFinancials]);
 
-  // Handle demo mode state: Auto-enable if no real sales exist, but allow toggle if producer has listed movies
-  const [useDemoMode, setUseDemoMode] = useState(!hasRealSales);
-
-  // Toggle fallback state safely if they want to peek
-  const toggleDemoMode = () => {
-    setUseDemoMode(prev => !prev);
-  };
-
-  // Select active dataset based on mode
-  const activeDataset = useDemoMode ? DEMO_FINANCIALS : liveFinancials;
+  // Select active dataset (always live financials in production)
+  const activeDataset = liveFinancials;
 
   // Aggregate metrics
   const totalRevenue = useMemo(() => {
@@ -132,28 +115,11 @@ export default function ProducerFinancials({ movies, activeUser }: ProducerFinan
           </p>
         </div>
 
-        {/* Dynamic Simulator Toggle banner if needed */}
-        {hasRealSales ? (
-          <button
-            onClick={toggleDemoMode}
-            className={`px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider font-bold transition-all border cursor-pointer flex items-center gap-1.5 ${
-              useDemoMode
-                ? 'bg-brand/10 border-brand/35 text-brand hover:bg-brand/20'
-                : 'bg-sleek-dark border-sleek-border text-zinc-500 hover:text-zinc-300 hover:border-zinc-700'
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>{useDemoMode ? 'Showing Sandbox Data' : 'View Sandbox Preview'}</span>
-          </button>
-        ) : (
-          <div className="bg-brand/5 border border-brand/20 rounded-xl px-3.5 py-2.5 flex items-center gap-2.5 max-w-xs shrink-0">
-            <Sparkles className="w-4 h-4 text-brand shrink-0 animate-pulse" />
-            <div className="space-y-0.5">
-              <p className="text-[10px] font-black tracking-wider uppercase text-brand">SANDBOX PREVIEW LOADED</p>
-              <p className="text-[9px] text-zinc-400">Showing demo box office data until your first movie purchase is completed.</p>
-            </div>
-          </div>
-        )}
+        {/* Live Ledger Status Badge */}
+        <div className="bg-brand/5 border border-brand/20 rounded-xl px-3.5 py-1.5 flex items-center gap-2 max-w-xs shrink-0">
+          <span className="w-1.5 h-1.5 bg-brand rounded-full animate-pulse shrink-0"></span>
+          <p className="text-[10px] font-mono uppercase tracking-wider text-brand font-bold">⚡ Live Ledger Active</p>
+        </div>
       </div>
 
       {/* Metric Cards Row */}

@@ -6,6 +6,7 @@ export interface User {
   role: UserRole;
   name: string;
   createdAt: string;
+  password?: string;
   // Producer specific
   isSubscribed?: boolean;
   subscriptionPlan?: 'monthly' | 'annual' | null;
